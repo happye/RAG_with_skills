@@ -163,3 +163,34 @@ Sweep output is stored in:
 If anything fails, check:
 
 - `docs/TROUBLESHOOTING_AND_LESSONS.md`
+
+## 12. v0.2 Progress Notes
+
+- Completed in code:
+  - `embedding` retriever mode
+  - lightweight reranker (`none`, `keyword`, `tfidf`)
+  - benchmark diagnostics (`stage_counts`, failed case export)
+- Current blocker for embedding A/B:
+  - first run needs to download a sentence-transformer model (hundreds of MB), which can be interrupted on unstable network.
+- If interrupted, rerun the same benchmark command. Download resumes from cache in most cases.
+
+## 13. Liaozhai A/B Snapshot (v0.2)
+
+Dataset:
+
+- `data/eval_set_liaozhai.jsonl`
+- `eval_count = 5`
+
+Retrieval-only comparison:
+
+- `hybrid + tfidf reranker`
+  - `retrieval_keyword_hit_avg = 0.9`
+  - `answer_keyword_hit_avg = 0.9`
+- `embedding + no reranker`
+  - `retrieval_keyword_hit_avg = 0.8`
+  - `answer_keyword_hit_avg = 0.9`
+
+Interpretation:
+
+- On this small Chinese eval set, `hybrid + tfidf reranker` currently gives better retrieval hit rate.
+- Answer hit rate is tied, so keep `hybrid + tfidf reranker` as the default for this corpus.

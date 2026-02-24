@@ -4,7 +4,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import requests
 
@@ -61,6 +61,9 @@ OPENAI_COMPAT_PROVIDERS = {
         "default_model": "doubao-seed-1-6-250615",
     },
 }
+
+_EMBED_MODEL_CACHE: Dict[str, object] = {}
+_EMBED_INDEX_CACHE: Dict[Tuple[int, str], object] = {}
 
 
 def build_grounded_prompt(question: str, context: str) -> str:
@@ -208,6 +211,23 @@ def _top_scored_chunks(
     return [item for item in paired[:top_k] if item[1] > 0]
 
 
+def _tfidf_scores_for_chunks(chunks: List[Chunk], query: str) -> List[float]:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    corpus = [chunk.text for chunk in chunks]
+    if not corpus:
+        return []
+    has_cjk = contains_cjk(query) or any(contains_cjk(chunk.text) for chunk in chunks[:20])
+    if has_cjk:
+        vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4), min_df=1)
+    else:
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
+    matrix = vectorizer.fit_transform(corpus + [query])
+    doc_matrix = matrix[:-1]
+    query_vec = matrix[-1]
+    return (doc_matrix @ query_vec.T).toarray().ravel().tolist()
+
+
 def retrieve_keyword(index: List[Chunk], query: str, top_k: int) -> List[Tuple[Chunk, float]]:
     q_tokens = set(tokenize(query))
     scores = [score_query_chunk(q_tokens, chunk.text) for chunk in index]
@@ -222,20 +242,9 @@ def retrieve_tfidf(index: List[Chunk], query: str, top_k: int) -> List[Tuple[Chu
             "TF-IDF retriever requires scikit-learn. Install requirements first."
         ) from exc
 
-    corpus = [chunk.text for chunk in index]
-    if not corpus:
+    if not index:
         return []
-
-    has_cjk = contains_cjk(query) or any(contains_cjk(chunk.text) for chunk in index[:50])
-    if has_cjk:
-        # Character n-grams are robust for Chinese without external tokenizers.
-        vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4), min_df=1)
-    else:
-        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
-    matrix = vectorizer.fit_transform(corpus + [query])
-    doc_matrix = matrix[:-1]
-    query_vec = matrix[-1]
-    similarities = (doc_matrix @ query_vec.T).toarray().ravel().tolist()
+    similarities = _tfidf_scores_for_chunks(index, query)
     return _top_scored_chunks(index, similarities, top_k)
 
 
@@ -256,15 +265,102 @@ def retrieve_hybrid(index: List[Chunk], query: str, top_k: int) -> List[Tuple[Ch
     return _top_scored_chunks(index, scores, top_k)
 
 
-def retrieve(
-    index: List[Chunk], query: str, top_k: int, retriever: str = "keyword"
+def get_embedding_model_name() -> str:
+    return get_env_clean(
+        "RAG_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+
+
+def _get_sentence_transformer(model_name: str):
+    if model_name in _EMBED_MODEL_CACHE:
+        return _EMBED_MODEL_CACHE[model_name]
+    try:
+        from sentence_transformers import SentenceTransformer
+    except Exception as exc:
+        raise RuntimeError(
+            "Embedding retriever requires sentence-transformers. "
+            "Install with: python -m pip install sentence-transformers"
+        ) from exc
+    model = SentenceTransformer(model_name)
+    _EMBED_MODEL_CACHE[model_name] = model
+    return model
+
+
+def _l2_normalize(matrix):
+    import numpy as np
+
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return matrix / norms
+
+
+def _get_embedding_index(index: List[Chunk], model_name: str):
+    cache_key = (id(index), model_name)
+    if cache_key in _EMBED_INDEX_CACHE:
+        return _EMBED_INDEX_CACHE[cache_key]
+
+    model = _get_sentence_transformer(model_name)
+    corpus = [chunk.text for chunk in index]
+    batch_size = int(get_env_clean("RAG_EMBEDDING_BATCH_SIZE", "32") or "32")
+    embeddings = model.encode(corpus, batch_size=batch_size, show_progress_bar=False)
+    embeddings = _l2_normalize(embeddings)
+    _EMBED_INDEX_CACHE[cache_key] = embeddings
+    return embeddings
+
+
+def retrieve_embedding(index: List[Chunk], query: str, top_k: int) -> List[Tuple[Chunk, float]]:
+    import numpy as np
+
+    if not index:
+        return []
+    model_name = get_embedding_model_name()
+    model = _get_sentence_transformer(model_name)
+    doc_embeddings = _get_embedding_index(index, model_name)
+    query_embedding = model.encode([query], show_progress_bar=False)
+    query_embedding = _l2_normalize(query_embedding)[0]
+    scores = np.dot(doc_embeddings, query_embedding).tolist()
+    return _top_scored_chunks(index, scores, top_k)
+
+
+def rerank(
+    candidates: List[Tuple[Chunk, float]], query: str, top_k: int, reranker: str = "none"
 ) -> List[Tuple[Chunk, float]]:
+    if reranker == "none":
+        return candidates[:top_k]
+    chunks = [chunk for chunk, _ in candidates]
+    if not chunks:
+        return []
+    if reranker == "keyword":
+        q_tokens = set(tokenize(query))
+        scores = [score_query_chunk(q_tokens, chunk.text) for chunk in chunks]
+        return _top_scored_chunks(chunks, scores, top_k)
+    if reranker == "tfidf":
+        scores = _tfidf_scores_for_chunks(chunks, query)
+        return _top_scored_chunks(chunks, scores, top_k)
+    raise ValueError(f"Unknown reranker: {reranker}")
+
+
+def retrieve(
+    index: List[Chunk],
+    query: str,
+    top_k: int,
+    retriever: str = "keyword",
+    reranker: str = "none",
+    rerank_pool: int = 0,
+) -> List[Tuple[Chunk, float]]:
+    effective_pool = rerank_pool if rerank_pool > 0 else max(top_k, top_k * 3)
     if retriever == "keyword":
-        return retrieve_keyword(index, query, top_k)
+        initial = retrieve_keyword(index, query, effective_pool)
+        return rerank(initial, query, top_k, reranker=reranker)
     if retriever == "tfidf":
-        return retrieve_tfidf(index, query, top_k)
+        initial = retrieve_tfidf(index, query, effective_pool)
+        return rerank(initial, query, top_k, reranker=reranker)
     if retriever == "hybrid":
-        return retrieve_hybrid(index, query, top_k)
+        initial = retrieve_hybrid(index, query, effective_pool)
+        return rerank(initial, query, top_k, reranker=reranker)
+    if retriever == "embedding":
+        initial = retrieve_embedding(index, query, effective_pool)
+        return rerank(initial, query, top_k, reranker=reranker)
     raise ValueError(f"Unknown retriever: {retriever}")
 
 
@@ -532,9 +628,21 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=3, help="Number of chunks to retrieve")
     parser.add_argument(
         "--retriever",
-        choices=["keyword", "tfidf", "hybrid"],
+        choices=["keyword", "tfidf", "hybrid", "embedding"],
         default="keyword",
         help="Retrieval strategy",
+    )
+    parser.add_argument(
+        "--reranker",
+        choices=["none", "keyword", "tfidf"],
+        default="none",
+        help="Optional second-stage reranker",
+    )
+    parser.add_argument(
+        "--rerank-pool",
+        type=int,
+        default=0,
+        help="Candidate pool size before reranking (0 uses dynamic default)",
     )
     parser.add_argument("--chunk-size", type=int, default=500, help="Chunk size in characters")
     parser.add_argument("--overlap", type=int, default=80, help="Chunk overlap in characters")
@@ -566,11 +674,19 @@ def main() -> None:
     if not index:
         raise ValueError("No chunks were indexed. Add .txt or .md files under data directory.")
 
-    retrieved = retrieve(index, args.query, top_k=args.top_k, retriever=args.retriever)
+    retrieved = retrieve(
+        index,
+        args.query,
+        top_k=args.top_k,
+        retriever=args.retriever,
+        reranker=args.reranker,
+        rerank_pool=args.rerank_pool,
+    )
     context = build_context(retrieved)
 
     print("=== Retrieval Summary ===")
     print(f"Retriever: {args.retriever}")
+    print(f"Reranker: {args.reranker}")
     print(f"Indexed chunks: {len(index)}")
     print(f"Retrieved chunks: {len(retrieved)}")
     print()

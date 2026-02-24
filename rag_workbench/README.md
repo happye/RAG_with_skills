@@ -74,6 +74,23 @@ Retriever options:
 - `keyword`: token overlap baseline
 - `tfidf`: lexical-semantic retrieval with n-gram TF-IDF cosine similarity
 - `hybrid`: weighted mix of keyword and tfidf (set `RAG_HYBRID_ALPHA` in env)
+- `embedding`: semantic retrieval using sentence-transformers embeddings
+
+Reranker options:
+
+- `none`: no second-stage reranking
+- `keyword`: token-overlap reranking over retrieved candidates
+- `tfidf`: TF-IDF reranking over retrieved candidates
+
+Embedding setup:
+
+```bash
+python -m pip install sentence-transformers
+```
+
+Optional embedding model override:
+
+- `RAG_EMBEDDING_MODEL` (default: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`)
 
 Chinese text note:
 
@@ -92,6 +109,7 @@ python src/rag_baseline.py --query "..." --provider kimi
 python src/rag_baseline.py --query "..." --provider glm
 python src/rag_baseline.py --query "..." --provider doubao
 python src/rag_baseline.py --query "..." --provider retrieval-only
+python src/rag_baseline.py --query "..." --retriever embedding --reranker tfidf --top-k 3 --rerank-pool 12
 ```
 
 6. Optional model override:
@@ -133,18 +151,25 @@ python src/rag_baseline.py --query "..." --provider openai --model gpt-4o
 Use the built-in benchmark runner to track iteration quality.
 
 1. Edit `data/eval_set.jsonl` with your own questions and expected keywords.
+	If this file is moved to `data_bak/eval_set.jsonl`, benchmark runner auto-fallbacks to that path.
 2. Run benchmark with Kimi:
 
 ```bash
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever tfidf
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever hybrid
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever embedding
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever keyword --max-questions 1
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever hybrid --reranker tfidf --rerank-pool 12
 ```
 
 3. Check summary in terminal and detailed logs in:
 
 `logs/eval_runs.jsonl`
+
+Failure/weak cases are also exported to:
+
+`logs/failed_cases.jsonl`
 
 This gives you a repeatable score snapshot for each change to chunking, retrieval, or prompting.
 

@@ -1,0 +1,5 @@
+{"id":"lz1","question":"请概括《聊斋志异》的主题。","expected_keywords":["鬼狐","批判","封建","爱情"]}
+{"id":"lz2","question":"聂小倩与宁采臣的故事体现了什么价值取向？","expected_keywords":["聂小倩","宁采臣","善良","恩义"]}
+{"id":"lz3","question":"《聊斋志异》的写作风格有什么特点？","expected_keywords":["志怪","传奇","讽刺","浪漫"]}
+{"id":"lz4","question":"作者借鬼狐故事主要批判了哪些社会问题？","expected_keywords":["科举","封建","黑暗","统治"]}
+{"id":"lz5","question":"请说明《聊斋志异》如何把超自然元素用于现实表达。","expected_keywords":["鬼","狐","现实","批判"]}
