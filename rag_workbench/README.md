@@ -6,6 +6,7 @@ This folder contains a minimal, runnable RAG baseline for learning and iteration
 
 - Usage Guide: `docs/USAGE_GUIDE.md`
 - Troubleshooting and Lessons: `docs/TROUBLESHOOTING_AND_LESSONS.md`
+- v0.2 Summary: `docs/V0_2_SUMMARY.md`
 
 ## What it does
 
