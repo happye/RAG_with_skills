@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
@@ -52,6 +53,26 @@ def classify_case(retrieved_chunks: int, answer: str) -> str:
     if "no relevant evidence found" in text:
         return "retrieval_low_signal"
     return "ok"
+
+
+def extract_source_citations(answer: str) -> List[str]:
+    if not answer:
+        return []
+    # Capture inline tags like [source=...; chunk=...; score=...]
+    return re.findall(r"\[source=.*?\]", answer)
+
+
+def citation_metrics(answer: str, retrieved_chunks: int) -> Dict[str, float]:
+    cites = extract_source_citations(answer)
+    has_citation = 1.0 if len(cites) > 0 else 0.0
+    if retrieved_chunks <= 0:
+        coverage = 0.0
+    else:
+        coverage = min(1.0, len(cites) / float(retrieved_chunks))
+    return {
+        "has_citation": has_citation,
+        "citation_coverage": coverage,
+    }
 
 
 def main() -> None:
@@ -122,11 +143,14 @@ def main() -> None:
     results = []
     retrieval_scores = []
     answer_scores = []
+    citation_presence_scores = []
+    citation_coverage_scores = []
     stage_counts = {
         "ok": 0,
         "retrieval_miss": 0,
         "retrieval_low_signal": 0,
         "generation_empty_or_timeout": 0,
+        "ungrounded_answer": 0,
     }
     failed_rows = []
 
@@ -155,7 +179,12 @@ def main() -> None:
         answer_hit = keyword_hit_rate(answer, keywords)
         retrieval_scores.append(retrieval_hit)
         answer_scores.append(answer_hit)
+        cite_stats = citation_metrics(answer, len(retrieved))
+        citation_presence_scores.append(cite_stats["has_citation"])
+        citation_coverage_scores.append(cite_stats["citation_coverage"])
         stage = classify_case(len(retrieved), answer)
+        if stage == "ok" and len(retrieved) > 0 and cite_stats["has_citation"] == 0.0:
+            stage = "ungrounded_answer"
         stage_counts[stage] = stage_counts.get(stage, 0) + 1
 
         results.append(
@@ -165,6 +194,8 @@ def main() -> None:
                 "retrieved_chunks": len(retrieved),
                 "retrieval_keyword_hit": round(retrieval_hit, 4),
                 "answer_keyword_hit": round(answer_hit, 4),
+                "has_citation": bool(cite_stats["has_citation"]),
+                "citation_coverage": round(cite_stats["citation_coverage"], 4),
                 "stage": stage,
                 "answer_preview": answer[:280],
             }
@@ -182,6 +213,8 @@ def main() -> None:
                     "retrieved_chunks": len(retrieved),
                     "retrieval_keyword_hit": round(retrieval_hit, 4),
                     "answer_keyword_hit": round(answer_hit, 4),
+                    "has_citation": bool(cite_stats["has_citation"]),
+                    "citation_coverage": round(cite_stats["citation_coverage"], 4),
                     "stage": stage,
                     "answer_preview": answer[:400],
                 }
@@ -189,6 +222,8 @@ def main() -> None:
 
     retrieval_avg = sum(retrieval_scores) / len(retrieval_scores)
     answer_avg = sum(answer_scores) / len(answer_scores)
+    citation_presence_avg = sum(citation_presence_scores) / len(citation_presence_scores)
+    citation_coverage_avg = sum(citation_coverage_scores) / len(citation_coverage_scores)
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -203,6 +238,8 @@ def main() -> None:
         "eval_count": len(rows),
         "retrieval_keyword_hit_avg": round(retrieval_avg, 4),
         "answer_keyword_hit_avg": round(answer_avg, 4),
+        "citation_presence_avg": round(citation_presence_avg, 4),
+        "citation_coverage_avg": round(citation_coverage_avg, 4),
         "stage_counts": stage_counts,
         "results": results,
     }
@@ -219,6 +256,8 @@ def main() -> None:
     print(f"Eval count: {len(rows)}")
     print(f"Retrieval keyword hit avg: {summary['retrieval_keyword_hit_avg']}")
     print(f"Answer keyword hit avg: {summary['answer_keyword_hit_avg']}")
+    print(f"Citation presence avg: {summary['citation_presence_avg']}")
+    print(f"Citation coverage avg: {summary['citation_coverage_avg']}")
     print(f"Stage counts: {stage_counts}")
     print(f"Log file: {args.log_file}")
     print(f"Failed cases file: {args.failed_file}")

@@ -172,6 +172,11 @@ Failure/weak cases are also exported to:
 
 `logs/failed_cases.jsonl`
 
+Benchmark summary also includes traceability metrics:
+
+- `citation_presence_avg`
+- `citation_coverage_avg`
+
 This gives you a repeatable score snapshot for each change to chunking, retrieval, or prompting.
 
 ## Hybrid alpha tuning
