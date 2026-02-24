@@ -1,0 +1,162 @@
+# RAG Workbench (0 -> 1 Baseline)
+
+This folder contains a minimal, runnable RAG baseline for learning and iteration.
+
+## Additional Docs
+
+- Usage Guide: `docs/USAGE_GUIDE.md`
+- Troubleshooting and Lessons: `docs/TROUBLESHOOTING_AND_LESSONS.md`
+
+## What it does
+
+- Loads local `.txt` and `.md` files from `data/`
+- Splits documents into chunks
+- Retrieves top-k chunks with pluggable strategies: `keyword`, `tfidf`, or `hybrid`
+- Generates answers with multiple providers: Anthropic, OpenAI (ChatGPT), Gemini, DeepSeek, Qwen, Kimi, GLM, Doubao
+- Falls back to grounded extractive output when no API key is present
+
+## Quick start
+
+1. Install dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+2. Configure API keys (choose at least one provider):
+
+- Option A: environment variables in shell
+- Option B: copy `.env.example` to `.env` and fill values (auto-loaded by script)
+
+Windows PowerShell examples:
+
+```powershell
+# Anthropic
+$env:ANTHROPIC_API_KEY="your_anthropic_key"
+
+# OpenAI / ChatGPT
+$env:OPENAI_API_KEY="your_openai_key"
+
+# Gemini
+$env:GEMINI_API_KEY="your_gemini_key"
+
+# DeepSeek
+$env:DEEPSEEK_API_KEY="your_deepseek_key"
+
+# Qwen
+$env:QWEN_API_KEY="your_qwen_key"
+
+# Kimi
+$env:KIMI_API_KEY="your_kimi_key"
+
+# GLM
+$env:GLM_API_KEY="your_glm_key"
+
+# Doubao
+$env:DOUBAO_API_KEY="your_doubao_key"
+```
+
+3. Put source files in `data/`.
+
+Encoding note:
+
+- Text loading supports common encodings including UTF-8, UTF-16, and GB18030.
+- This improves ingestion for Chinese book files exported from different tools.
+
+4. Run a query:
+
+```bash
+python src/rag_baseline.py --query "What does the project focus on?" --top-k 3 --provider auto --retriever keyword
+```
+
+Retriever options:
+
+- `keyword`: token overlap baseline
+- `tfidf`: lexical-semantic retrieval with n-gram TF-IDF cosine similarity
+- `hybrid`: weighted mix of keyword and tfidf (set `RAG_HYBRID_ALPHA` in env)
+
+Chinese text note:
+
+- The retriever now supports Chinese by using CJK-aware tokenization and char n-gram TF-IDF.
+- For Chinese corpora, start with `--retriever tfidf` or `--retriever hybrid`.
+
+5. Select provider explicitly (recommended for experiments):
+
+```bash
+python src/rag_baseline.py --query "..." --provider anthropic
+python src/rag_baseline.py --query "..." --provider openai
+python src/rag_baseline.py --query "..." --provider gemini
+python src/rag_baseline.py --query "..." --provider deepseek
+python src/rag_baseline.py --query "..." --provider qwen
+python src/rag_baseline.py --query "..." --provider kimi
+python src/rag_baseline.py --query "..." --provider glm
+python src/rag_baseline.py --query "..." --provider doubao
+python src/rag_baseline.py --query "..." --provider retrieval-only
+```
+
+6. Optional model override:
+
+```bash
+python src/rag_baseline.py --query "..." --provider openai --model gpt-4o
+```
+
+## Provider env var map
+
+- `anthropic`: `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL`
+- `openai`: `OPENAI_API_KEY`, optional `OPENAI_MODEL`, `OPENAI_BASE_URL`
+- `gemini`: `GEMINI_API_KEY`, optional `GEMINI_MODEL`
+- `deepseek`: `DEEPSEEK_API_KEY`, optional `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`
+- `qwen`: `QWEN_API_KEY`, optional `QWEN_MODEL`, `QWEN_BASE_URL`
+- `kimi`: `KIMI_API_KEY`, optional `KIMI_MODEL`, `KIMI_BASE_URL`
+- `glm`: `GLM_API_KEY`, optional `GLM_MODEL`, `GLM_BASE_URL`
+- `doubao`: `DOUBAO_API_KEY`, optional `DOUBAO_MODEL`, `DOUBAO_BASE_URL`
+
+## Kimi troubleshooting
+
+- If you see `invalid temperature: only 1 is allowed for this model`, use `KIMI_MODEL=kimi-k2.5` with `KIMI_TEMPERATURE=1`.
+- The script now applies this automatically for `kimi-k2.5` models.
+- If you hit `429`, check account balance and rate/concurrency limits in Moonshot console.
+- If you see `kimi returned empty content (finish_reason=length)`, increase:
+	- `KIMI_MAX_COMPLETION_TOKENS` (default now `1200`)
+	- `KIMI_MAX_COMPLETION_TOKENS_CAP` (default now `4000`)
+	The script also retries once with a compact-answer instruction.
+
+## Next tuning steps
+
+- Replace lexical retrieval with embedding-based retrieval.
+- Add reranking.
+- Add a benchmark set and scorecard.
+- Add experiment logging for each configuration change.
+
+## Benchmark loop (Kimi-first)
+
+Use the built-in benchmark runner to track iteration quality.
+
+1. Edit `data/eval_set.jsonl` with your own questions and expected keywords.
+2. Run benchmark with Kimi:
+
+```bash
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever tfidf
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever hybrid
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever keyword --max-questions 1
+```
+
+3. Check summary in terminal and detailed logs in:
+
+`logs/eval_runs.jsonl`
+
+This gives you a repeatable score snapshot for each change to chunking, retrieval, or prompting.
+
+## Hybrid alpha tuning
+
+Find the best `hybrid` retriever weight automatically:
+
+```bash
+python src/tune_hybrid_alpha.py --provider kimi --model kimi-k2.5 --alphas 0.2,0.5,0.8
+python src/tune_hybrid_alpha.py --provider kimi --model kimi-k2.5 --alphas 0.2,0.5,0.8 --max-questions 1
+```
+
+Result logs are stored in:
+
+`logs/hybrid_alpha_sweep.jsonl`

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Environments and secrets
+.env
+.env.*
+!.env.example
+
+# Project runtime artifacts
+rag_workbench/logs/
+rag_workbench/data_bak/
+backups/
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
