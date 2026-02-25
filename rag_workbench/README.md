@@ -7,13 +7,15 @@ This folder contains a minimal, runnable RAG baseline for learning and iteration
 - Usage Guide: `docs/USAGE_GUIDE.md`
 - Troubleshooting and Lessons: `docs/TROUBLESHOOTING_AND_LESSONS.md`
 - v0.2 Summary: `docs/V0_2_SUMMARY.md`
+- v0.5 Summary: `docs/V0_5_SUMMARY.md`
+- v0.5 Release Note: `docs/V0_5_RELEASE_NOTE.md`
 - Milestones Roadmap: `docs/MILESTONES.md`
 
 ## What it does
 
 - Loads local `.txt` and `.md` files from `data/`
 - Splits documents into chunks
-- Retrieves top-k chunks with pluggable strategies: `keyword`, `tfidf`, or `hybrid`
+- Retrieves top-k chunks with pluggable strategies: `keyword`, `tfidf`, `hybrid`, `embedding`, `qdrant`
 - Generates answers with multiple providers: Anthropic, OpenAI (ChatGPT), Gemini, DeepSeek, Qwen, Kimi, GLM, Doubao
 - Falls back to grounded extractive output when no API key is present
 
@@ -77,6 +79,7 @@ Retriever options:
 - `tfidf`: lexical-semantic retrieval with n-gram TF-IDF cosine similarity
 - `hybrid`: weighted mix of keyword and tfidf (set `RAG_HYBRID_ALPHA` in env)
 - `embedding`: semantic retrieval using sentence-transformers embeddings
+- `qdrant`: semantic retrieval backed by local Qdrant vector store
 
 Reranker options:
 
@@ -93,6 +96,18 @@ python -m pip install sentence-transformers
 Optional embedding model override:
 
 - `RAG_EMBEDDING_MODEL` (default: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`)
+
+Qdrant setup:
+
+```bash
+python -m pip install qdrant-client
+```
+
+Optional Qdrant env vars:
+
+- `RAG_QDRANT_PATH` (default: `.cache/qdrant`)
+- `RAG_QDRANT_COLLECTION` (default: auto-generated from corpus + model)
+- `RAG_QDRANT_RECREATE=1` forces collection rebuild
 
 Chinese text note:
 
@@ -112,6 +127,7 @@ python src/rag_baseline.py --query "..." --provider glm
 python src/rag_baseline.py --query "..." --provider doubao
 python src/rag_baseline.py --query "..." --provider retrieval-only
 python src/rag_baseline.py --query "..." --retriever embedding --reranker tfidf --top-k 3 --rerank-pool 12
+python src/rag_baseline.py --query "..." --retriever qdrant --reranker tfidf --top-k 3 --rerank-pool 12
 ```
 
 6. Optional model override:
@@ -190,6 +206,7 @@ python src/benchmark_runner.py --provider kimi --model kimi-k2.5
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever tfidf
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever hybrid
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever embedding
+python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever qdrant
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever keyword --max-questions 1
 python src/benchmark_runner.py --provider kimi --model kimi-k2.5 --retriever hybrid --reranker tfidf --rerank-pool 12
 ```

@@ -83,7 +83,7 @@ def main() -> None:
     parser.add_argument("--model", default="", help="Optional model override")
     parser.add_argument(
         "--retriever",
-        choices=["keyword", "tfidf", "hybrid", "embedding"],
+        choices=["keyword", "tfidf", "hybrid", "embedding", "qdrant"],
         default="keyword",
         help="Retrieval strategy",
     )

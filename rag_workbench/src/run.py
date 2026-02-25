@@ -35,7 +35,7 @@ MODE_DEFAULTS = {
         "model": "",
     },
     "quality": {
-        "retriever": "embedding",
+        "retriever": "qdrant",
         "reranker": "tfidf",
         "rerank_pool": 20,
         "top_k": 4,
@@ -72,7 +72,7 @@ def main() -> None:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument(
-        "--retriever", choices=["keyword", "tfidf", "hybrid", "embedding"], default=None
+        "--retriever", choices=["keyword", "tfidf", "hybrid", "embedding", "qdrant"], default=None
     )
     parser.add_argument(
         "--reranker", choices=["none", "keyword", "tfidf"], default=None

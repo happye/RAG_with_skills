@@ -66,6 +66,7 @@ OPENAI_COMPAT_PROVIDERS = {
 
 _EMBED_MODEL_CACHE: Dict[str, object] = {}
 _EMBED_INDEX_CACHE: Dict[Tuple[int, str], object] = {}
+_QDRANT_COLLECTION_CACHE: Dict[Tuple[int, str, str], bool] = {}
 
 
 def build_grounded_prompt(question: str, context: str) -> str:
@@ -404,6 +405,114 @@ def retrieve_embedding(index: List[Chunk], query: str, top_k: int) -> List[Tuple
     return _top_scored_chunks(index, scores, top_k)
 
 
+def _default_qdrant_collection(index: List[Chunk], model_name: str) -> str:
+    hasher = hashlib.sha1()
+    hasher.update(model_name.encode("utf-8"))
+    sample_count = min(len(index), 50)
+    for chunk in index[:sample_count]:
+        hasher.update(chunk.source.encode("utf-8", errors="ignore"))
+        hasher.update(str(chunk.chunk_id).encode("utf-8"))
+        hasher.update(chunk.text[:200].encode("utf-8", errors="ignore"))
+    return f"rag_{hasher.hexdigest()[:12]}"
+
+
+def _ensure_qdrant_collection(index: List[Chunk], model_name: str):
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Distance, PointStruct, VectorParams
+    except Exception as exc:
+        raise RuntimeError(
+            "Qdrant retriever requires qdrant-client. "
+            "Install with: python -m pip install qdrant-client"
+        ) from exc
+
+    if not index:
+        return None, ""
+
+    qdrant_path = get_env_clean("RAG_QDRANT_PATH", ".cache/qdrant")
+    model = _get_sentence_transformer(model_name)
+    embeddings = _get_embedding_index(index, model_name)
+    vector_size = int(embeddings.shape[1])
+
+    collection_name = get_env_clean("RAG_QDRANT_COLLECTION", "")
+    if not collection_name:
+        collection_name = _default_qdrant_collection(index, model_name)
+
+    cache_key = (id(index), model_name, collection_name)
+    client = QdrantClient(path=qdrant_path)
+    if cache_key in _QDRANT_COLLECTION_CACHE:
+        return client, collection_name
+
+    recreate = get_env_clean("RAG_QDRANT_RECREATE", "0") == "1"
+    try:
+        exists = client.collection_exists(collection_name=collection_name)
+    except Exception:
+        exists = False
+
+    if recreate and exists:
+        client.delete_collection(collection_name=collection_name)
+        exists = False
+
+    if not exists:
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+        )
+        points = [
+            PointStruct(id=i, vector=embeddings[i].tolist(), payload={"chunk_idx": i})
+            for i in range(len(index))
+        ]
+        client.upsert(collection_name=collection_name, points=points)
+    _QDRANT_COLLECTION_CACHE[cache_key] = True
+    return client, collection_name
+
+
+def retrieve_qdrant(index: List[Chunk], query: str, top_k: int) -> List[Tuple[Chunk, float]]:
+    if not index:
+        return []
+
+    model_name = get_embedding_model_name()
+    model = _get_sentence_transformer(model_name)
+    client, collection_name = _ensure_qdrant_collection(index, model_name)
+    query_embedding = model.encode([query], show_progress_bar=False)
+    query_embedding = _l2_normalize(query_embedding)[0].tolist()
+
+    try:
+        if hasattr(client, "query_points"):
+            query_result = client.query_points(
+                collection_name=collection_name,
+                query=query_embedding,
+                limit=max(1, top_k),
+                with_payload=True,
+            )
+            hits = getattr(query_result, "points", query_result)
+        else:
+            hits = client.search(
+                collection_name=collection_name,
+                query_vector=query_embedding,
+                limit=max(1, top_k),
+                with_payload=True,
+            )
+    except Exception as exc:
+        raise RuntimeError(f"Qdrant search failed: {exc}") from exc
+
+    results: List[Tuple[Chunk, float]] = []
+    for hit in hits:
+        idx = None
+        payload = getattr(hit, "payload", None) or {}
+        if isinstance(payload, dict) and "chunk_idx" in payload:
+            idx = int(payload["chunk_idx"])
+        elif getattr(hit, "id", None) is not None:
+            idx = int(hit.id)
+        if idx is None or idx < 0 or idx >= len(index):
+            continue
+        score = float(getattr(hit, "score", 0.0) or 0.0)
+        if score <= 0:
+            continue
+        results.append((index[idx], score))
+    return results[:top_k]
+
+
 def rerank(
     candidates: List[Tuple[Chunk, float]], query: str, top_k: int, reranker: str = "none"
 ) -> List[Tuple[Chunk, float]]:
@@ -442,6 +551,9 @@ def retrieve(
         return rerank(initial, query, top_k, reranker=reranker)
     if retriever == "embedding":
         initial = retrieve_embedding(index, query, effective_pool)
+        return rerank(initial, query, top_k, reranker=reranker)
+    if retriever == "qdrant":
+        initial = retrieve_qdrant(index, query, effective_pool)
         return rerank(initial, query, top_k, reranker=reranker)
     raise ValueError(f"Unknown retriever: {retriever}")
 
@@ -710,7 +822,7 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=3, help="Number of chunks to retrieve")
     parser.add_argument(
         "--retriever",
-        choices=["keyword", "tfidf", "hybrid", "embedding"],
+        choices=["keyword", "tfidf", "hybrid", "embedding", "qdrant"],
         default="keyword",
         help="Retrieval strategy",
     )
