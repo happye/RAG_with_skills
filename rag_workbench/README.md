@@ -7,6 +7,7 @@ This folder contains a minimal, runnable RAG baseline for learning and iteration
 - Usage Guide: `docs/USAGE_GUIDE.md`
 - Troubleshooting and Lessons: `docs/TROUBLESHOOTING_AND_LESSONS.md`
 - v0.2 Summary: `docs/V0_2_SUMMARY.md`
+- Milestones Roadmap: `docs/MILESTONES.md`
 
 ## What it does
 
@@ -119,6 +120,35 @@ python src/rag_baseline.py --query "..." --retriever embedding --reranker tfidf 
 python src/rag_baseline.py --query "..." --provider openai --model gpt-4o
 ```
 
+## Simple Run (Recommended)
+
+Use `src/run.py` with one config file and mode profiles.
+
+1. Edit `config.yaml` (set at least `query`).
+2. Run:
+
+```bash
+python src/run.py
+```
+
+3. Optional mode switch:
+
+```bash
+python src/run.py --mode fast
+python src/run.py --mode balanced
+python src/run.py --mode quality
+```
+
+4. Optional one-off overrides:
+
+```bash
+python src/run.py --query "请概括《聊斋志异》的主题" --top-k 4 --retriever hybrid
+```
+
+Override priority:
+
+- CLI args > `config.yaml` > mode defaults
+
 ## Provider env var map
 
 - `anthropic`: `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL`
@@ -191,3 +221,23 @@ python src/tune_hybrid_alpha.py --provider kimi --model kimi-k2.5 --alphas 0.2,0
 Result logs are stored in:
 
 `logs/hybrid_alpha_sweep.jsonl`
+
+## Compare Two Runs
+
+Use the run comparator to check improvements/regressions between benchmark runs:
+
+```bash
+python src/compare_runs.py --list
+python src/compare_runs.py --base-index -2 --target-index -1
+python src/compare_runs.py --base-index -2 --target-index -1 --output-file logs/compare_last.json
+```
+
+## Offline Index Cache
+
+Index artifacts are cached automatically to speed up repeated runs on unchanged corpora.
+
+Environment controls:
+
+- `RAG_USE_INDEX_CACHE=1` (default) enables cache reuse.
+- `RAG_USE_INDEX_CACHE=0` disables cache and forces rebuild.
+- `RAG_INDEX_CACHE_DIR=.cache/index` sets cache location.

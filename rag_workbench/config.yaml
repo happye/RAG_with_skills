@@ -1,0 +1,21 @@
+# Simple-first runtime config for src/run.py
+# Priority: CLI override > this config > mode defaults.
+
+mode: balanced
+
+# Required in either config or CLI.
+query: ""
+
+# Core runtime options.
+data_dir: data
+provider: kimi
+model: kimi-k2.5
+
+# Optional overrides. Leave empty/null to use mode defaults.
+retriever: ""
+reranker: ""
+rerank_pool: null
+
+top_k: null
+chunk_size: null
+overlap: null

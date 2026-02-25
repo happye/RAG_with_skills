@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import json
 import os
 import re
 import time
@@ -168,6 +170,69 @@ def load_documents(data_dir: Path) -> List[Tuple[str, str]]:
     return docs
 
 
+def _indexable_files(data_dir: Path) -> List[Path]:
+    return [
+        path
+        for path in sorted(data_dir.rglob("*"))
+        if path.is_file() and path.suffix.lower() in {".txt", ".md"}
+    ]
+
+
+def _corpus_signature(data_dir: Path, chunk_size: int, overlap: int) -> str:
+    items = []
+    for path in _indexable_files(data_dir):
+        stat = path.stat()
+        items.append(
+            {
+                "rel": str(path.relative_to(data_dir)),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    payload = {
+        "chunk_size": chunk_size,
+        "overlap": overlap,
+        "files": items,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def _index_cache_path(data_dir: Path, chunk_size: int, overlap: int) -> Path:
+    cache_root = Path(get_env_clean("RAG_INDEX_CACHE_DIR", ".cache/index"))
+    signature = _corpus_signature(data_dir, chunk_size, overlap)
+    return cache_root / f"index_{signature}_c{chunk_size}_o{overlap}.jsonl"
+
+
+def _save_index_cache(cache_path: Path, index: List[Chunk]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with cache_path.open("w", encoding="utf-8") as f:
+        for chunk in index:
+            f.write(
+                json.dumps(
+                    {
+                        "source": chunk.source,
+                        "chunk_id": chunk.chunk_id,
+                        "text": chunk.text,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+
+def _load_index_cache(cache_path: Path) -> List[Chunk]:
+    rows = []
+    for line in cache_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        obj = json.loads(line)
+        rows.append(
+            Chunk(source=obj["source"], chunk_id=int(obj["chunk_id"]), text=obj["text"])
+        )
+    return rows
+
+
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 80) -> List[str]:
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
@@ -186,12 +251,29 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 80) -> List[str]
 
 
 def build_index(data_dir: Path, chunk_size: int, overlap: int) -> List[Chunk]:
+    use_cache = get_env_clean("RAG_USE_INDEX_CACHE", "1") != "0"
+    cache_path = _index_cache_path(data_dir, chunk_size, overlap)
+    if use_cache and cache_path.exists():
+        try:
+            return _load_index_cache(cache_path)
+        except Exception:
+            # Rebuild if cache is corrupted or incompatible.
+            pass
+
     index = []
     docs = load_documents(data_dir)
     for source, content in docs:
         pieces = chunk_text(content, chunk_size=chunk_size, overlap=overlap)
         for i, piece in enumerate(pieces):
             index.append(Chunk(source=source, chunk_id=i, text=piece))
+
+    if use_cache:
+        try:
+            _save_index_cache(cache_path, index)
+        except Exception:
+            # Cache write failure should never break core retrieval flow.
+            pass
+
     return index
 
 
