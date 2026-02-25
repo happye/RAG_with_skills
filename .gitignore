@@ -15,6 +15,7 @@ venv/
 # Project runtime artifacts
 rag_workbench/logs/
 rag_workbench/data_bak/
+rag_workbench/.cache/
 backups/
 
 # OS and editor
